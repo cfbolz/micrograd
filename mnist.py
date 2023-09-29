@@ -463,8 +463,7 @@ def make_main():
         for node in reverse_topo:
             node._backward()
 
-    def zero():
-        # zero grad
+    def zero_grad():
         for node in topo:
             node.grad = 0.
 
@@ -504,7 +503,7 @@ def make_main():
             before = time.time()
             batches = shuffle_and_group(batch_size, num_training_images)
             for batch_idx, batch in enumerate(batches):
-                zero()
+                zero_grad()
                 batch_loss = 0.
                 jit.promote(len(batch))
                 for im in batch:

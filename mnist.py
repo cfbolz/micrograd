@@ -504,15 +504,17 @@ def make_main():
             before = time.time()
             batches = shuffle_and_group(batch_size, num_training_images)
             for batch_idx, batch in enumerate(batches):
-                print "   ", batch_idx, "of", len(batches)
                 zero()
+                batch_loss = 0.
                 jit.promote(len(batch))
                 for im in batch:
                     driver.jit_merge_point()
                     if im is not None:
-                        epoch_loss += forward(im)
+                        batch_loss += forward(im)
                         backward()
                 update_params()
+                print "   ", batch_idx, "of", len(batches), "(loss ", batch_loss, ")"
+                epoch_loss += batch_loss
             after = time.time()
             delta = after - before
             epoch_loss /= len(db)

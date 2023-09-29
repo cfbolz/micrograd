@@ -67,13 +67,11 @@ class Value(object):
     def _build_topo(self, topo):
         if not self._visited:
             self._visited = True
-            topo.append(self)
             self._build_topo_recurse(topo)
+            topo.append(self)
 
     def _build_topo_recurse(self, topo):
         pass
-    #    for child in self._prev:
-    #            child._build_topo(topo)
 
     @jit.unroll_safe
     def backward(self):

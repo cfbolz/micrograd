@@ -98,6 +98,7 @@ class Const(BaseValue):
     _immutable_fields_ = ['_const_data']
 
     def __init__(self, data):
+        BaseValue.__init__(self)
         self._const_data = data
 
     def get_data(self):
@@ -430,7 +431,7 @@ def make_main():
     params = model.parameters()
     params_set = {p: None for p in params}
     non_params = [p for p in topo if p not in params_set]
-    reverse_topo = loss.topo()[::-1]
+    reverse_topo = topo[::-1]
     db = list(images("train-images-idx3-ubyte", "train-labels-idx1-ubyte"))
     driver = jit.JitDriver(greens=[], reds='auto')
 

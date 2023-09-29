@@ -10,51 +10,47 @@ from rpython.rlib import rrandom
 
 random = rrandom.Random()
 
-
-class Value(object):
-    """ stores a single scalar value and its gradient """
-    _attrs_ = ['data', 'grad', '_visited']
+class BaseValue(object):
+    _attrs_ = ['grad']
     _op = ''
+    _visited = False
 
-    def __init__(self, data):
-        self.data = data
+    def __init__(self):
         self.grad = 0
-        self._visited = False
 
     def _backward(self): pass
 
     def _forward(self): pass
 
     def add(self, other):
-        out = AddValue(self.data + other.data, self, other)
+        out = AddValue(self, other)
         return out
 
     def mul(self, other):
-        out = MulValue(self.data * other.data, self, other)
+        out = MulValue(self, other)
         return out
 
     def sub(self, other):
-        return self.add(other.mul(Value(-1)))
+        return self.add(other.mul(Const(-1)))
 
     def pow(self, other):
         assert isinstance(other, (int, float)), "only supporting int/float powers for now"
-        out = PowValue(math.pow(self.data, other), self)
-        out.exponent = other
+        out = PowValue(self, other)
         return out
 
     def div(self, other): # self / other
         return self.mul(other.pow(-1))
 
     def relu(self):
-        out = ReluValue((self.data > 0) * self.data, self)
+        out = ReluValue(self)
         return out
 
     def log(self):
-        out = LogValue(math.log(self.data), self)
+        out = LogValue(self)
         return out
 
     def exp(self):
-        out = ExpValue(math.exp(self.data), self)
+        out = ExpValue(self)
         return out
 
     def topo(self):
@@ -98,13 +94,37 @@ class Value(object):
 
     # def __rtruediv__(self, other): # other / self
     #     return other * self**-1
+class Const(BaseValue):
+    _immutable_fields_ = ['_const_data']
+
+    def __init__(self, data):
+        self._const_data = data
+
+    def get_data(self):
+        return self._const_data
+
+    def _build_topo(self, _):
+        pass
 
     def __repr__(self):
-        return "Value(data=%s, grad=%s)" % (self.data, self.grad)
+        return "Const(%s)" % (self._const_data, )
+
+class Value(BaseValue):
+    """ stores a single scalar value and its gradient """
+    def __init__(self):
+        BaseValue.__init__(self)
+        self.data = 0.0
+
+    def get_data(self):
+        return self.data
+
+    def __repr__(self):
+        return "%s(data=%s, grad=%s)" % (self.__class__.__name__, self.get_data(), self.grad)
 
 class UnaryValue(Value):
-    def __init__(self, data, prev0):
-        Value.__init__(self, data)
+    _immutable_fields_ = ['_prev0']
+    def __init__(self, prev0):
+        Value.__init__(self)
         self._prev0 = prev0
 
     def _build_topo_recurse(self, topo):
@@ -112,8 +132,9 @@ class UnaryValue(Value):
 
 
 class BinaryValue(Value):
-    def __init__(self, data, prev0, prev1):
-        Value.__init__(self, data)
+    _immutable_fields_ = ['_prev0', '_prev1']
+    def __init__(self, prev0, prev1):
+        Value.__init__(self)
         self._prev0 = prev0
         self._prev1 = prev1
 
@@ -125,7 +146,7 @@ class BinaryValue(Value):
 class AddValue(BinaryValue):
     _op = '+'
     def _forward(self):
-        self.data = self._prev0.data + self._prev1.data
+        self.data = self._prev0.get_data() + self._prev1.get_data()
     def _backward(out):
         self, other = out._prev0, out._prev1
         self.grad += out.grad
@@ -134,62 +155,64 @@ class AddValue(BinaryValue):
 class MulValue(BinaryValue):
     _op = '*'
     def _forward(self):
-        self.data = self._prev0.data * self._prev1.data
+        self.data = self._prev0.get_data() * self._prev1.get_data()
     def _backward(out):
         self, other = out._prev0, out._prev1
-        self.grad += other.data * out.grad
-        other.grad += self.data * out.grad
+        self.grad += other.get_data() * out.grad
+        other.grad += self.get_data() * out.grad
 
 class PowValue(UnaryValue):
     _op = 'pow'
+    def __init__(self, prev, exponent):
+        UnaryValue.__init__(self, prev)
+        self.exponent = exponent
     def _forward(self):
-        self.data = math.pow(self._prev0.data, self.exponent)
+        self.data = math.pow(self._prev0.get_data(), self.exponent)
     def _backward(out):
         self = out._prev0
-        self.grad += (out.exponent * math.pow(self.data, out.exponent - 1)) * out.grad
+        self.grad += (out.exponent * math.pow(self.get_data(), out.exponent - 1)) * out.grad
 
 class ReluValue(UnaryValue):
     _op = 'relu'
     def _forward(self):
-        self.data = (self._prev0.data > 0) * self._prev0.data
+        self.data = (self._prev0.get_data() > 0) * self._prev0.get_data()
     def _backward(out):
         self = out._prev0
-        self.grad += (out.data > 0) * out.grad
+        self.grad += (out.get_data() > 0) * out.grad
 
 
 class LogValue(UnaryValue):
     _op = 'log'
     def _forward(self):
-        self.data = math.log(self._prev0.data)
+        self.data = math.log(self._prev0.get_data())
     def _backward(out):
         self = out._prev0
-        self.grad += 1/self.data * out.grad
+        self.grad += 1/self.get_data() * out.grad
 
 class ExpValue(UnaryValue):
     _op = 'exp'
     def _forward(self):
-        self.data = math.exp(self._prev0.data)
+        self.data = math.exp(self._prev0.get_data())
     def _backward(out):
         self = out._prev0
-        self.grad += math.exp(self.data) * out.grad
+        self.grad += math.exp(self.get_data()) * out.grad
 
 class Max(BinaryValue):
     _op = 'max'
-    def __init__(self, left, right):
-        left_bigger = float(left.data > right.data)
-        # bad branch-free way to write max :-(
-        result = left_bigger * left.data + (1.0 - left_bigger) * right.data
-        BinaryValue.__init__(self, result, left, right)
 
     def _forward(self):
         # bad branch-free way to write max :-(
         left, right = self._prev0, self._prev1
-        left_bigger = float(left.data > right.data)
-        self.data = left_bigger * left.data + (1.0 - left_bigger) * right.data
+        leftdata = left.get_data()
+        rightdata = right.get_data()
+        left_bigger = float(leftdata > rightdata)
+        self.data = left_bigger * leftdata + (1.0 - left_bigger) * rightdata
 
     def _backward(self):
         left, right = self._prev0, self._prev1
-        left_bigger = float(left.data > right.data)
+        leftdata = left.get_data()
+        rightdata = right.get_data()
+        left_bigger = float(leftdata > rightdata)
         left.grad += left_bigger * self.grad
         right.grad += (1.0 - left_bigger) * self.grad
 
@@ -199,7 +222,6 @@ class Module(object):
     def zero_grad(self):
         for p in self.parameters():
             p.grad = 0
-            p._visited = False
 
     @jit.elidable
     def parameters(self):
@@ -209,8 +231,13 @@ class Neuron(object):
     _immutable_fields_ = ['w[*]', '_parameters[*]', 'b', 'nonlin']
 
     def __init__(self, nin, nonlin=True):
-        self.w = [Value(random.random()) for _ in range(nin)] # op=weight
-        self.b = Value(0) # op=bias
+        w = []
+        for _ in range(nin):
+            v = Value()
+            v.data = random.random()
+            w.append(v)
+        self.w = w
+        self.b = Value() # op=bias
         self.nonlin = nonlin
         self._parameters = (self.w + [self.b])[:]
 
@@ -387,17 +414,17 @@ def shuffle(x):
 def loss_of(model, inp_, expected_onehot):
     output = model.evalmlp(inp_)
     softmax_output = stable_softmax(output)
-    result = Value(0.0)
+    result = Const(0.0)
     for i in range(len(expected_onehot)):
         exp = expected_onehot[i]
         act = softmax_output[i]
-        result = result.add(act.add(Value(0.0001)).log().mul(exp))
-    return result.mul(Value(-1))
+        result = result.add(act.add(Const(0.0001)).log().mul(exp))
+    return result.mul(Const(-1))
 
 def make_main():
-    inp_ = [Value(0.) for _ in range(DIM)]
+    inp_ = [Value() for _ in range(DIM)]
     model = timer(lambda: MLP(DIM, [50, NUM_DIGITS]), "Building model...")
-    expected_onehot = [Value(0.) for _ in range(NUM_DIGITS)]
+    expected_onehot = [Value() for _ in range(NUM_DIGITS)]
     loss = loss_of(model, inp_, expected_onehot)
     topo = loss.topo()
     params = model.parameters()
@@ -416,23 +443,34 @@ def make_main():
         shuffle(l)
         return grouper(batch_size, l)
 
+    @jit.unroll_safe
     def forward(image):
         for e in expected_onehot:
             e.data = 0.
         expected_onehot[image.label].data = 1.
         for i in range(len(inp_)):
             # TODO(max): Should divide by 255
-            inp_[i].data = ord(image.pixels[i])
+            inp_[i].data = ord(image.pixels[i]) / 255.
         for node in topo:
             node._forward()
         return loss.data
 
+    @jit.unroll_safe
     def backward():
         for node in non_params:
             node.grad = 0.
         loss.grad = 1.
         for node in reverse_topo:
             node._backward()
+
+    def zero():
+        # zero grad
+        for node in topo:
+            node.grad = 0.
+
+    def update_params():
+        for p in model.parameters():
+            p.data -= 0.1 * p.grad
 
     def main(args):
         print("Training...")
@@ -466,19 +504,15 @@ def make_main():
             before = time.time()
             batches = shuffle_and_group(batch_size, num_training_images)
             for batch_idx, batch in enumerate(batches):
-                driver.jit_merge_point()
                 print "   ", batch_idx, "of", len(batches)
-                # zero grad
-                for node in topo:
-                    node.grad = 0.
-                    node._visited = False
+                zero()
                 jit.promote(len(batch))
                 for im in batch:
+                    driver.jit_merge_point()
                     if im is not None:
                         epoch_loss += forward(im)
                         backward()
-                for p in model.parameters():
-                    p.data -= 0.1 * p.grad
+                update_params()
             after = time.time()
             delta = after - before
             epoch_loss /= len(db)
